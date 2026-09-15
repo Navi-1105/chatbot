@@ -1,5 +1,6 @@
 streamlit==1.57.0
 anyio==4.8.0
+starlette==0.46.2
 python-dotenv
 sentence-transformers
 chromadb
