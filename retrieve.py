@@ -1,9 +1,16 @@
-import os
-
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 import chromadb
 from google import genai
+from observability import (
+    GEMINI_MODEL,
+    flush,
+    generation_observation,
+    rag_trace,
+    retrieval_output,
+    retriever_observation,
+    usage_details,
+)
 
 
 # --------------------------------
@@ -57,103 +64,128 @@ gemini_client = genai.Client()
 query = input("\nAsk a question: ")
 
 
-# --------------------------------
-# 7. Create query embedding
-# --------------------------------
+with rag_trace(
+    query=query,
+    entrypoint="cli",
+    top_k=TOP_K,
+) as root_span:
 
-query_embedding = embedding_model.encode(
-    query
-).tolist()
+    # --------------------------------
+    # 7. Retrieve relevant chunks
+    # --------------------------------
+
+    with retriever_observation(
+        query=query,
+        top_k=TOP_K
+    ) as retriever_span:
+
+        query_embedding = embedding_model.encode(
+            query
+        ).tolist()
+
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=TOP_K,
+            include=[
+                "documents",
+                "metadatas",
+                "distances"
+            ]
+        )
+
+        if retriever_span:
+            retriever_span.update(
+                output=retrieval_output(
+                    results
+                )
+            )
 
 
-# --------------------------------
-# 8. Retrieve relevant chunks
-# --------------------------------
+    # --------------------------------
+    # 8. Check relevance
+    # --------------------------------
 
-results = collection.query(
-    query_embeddings=[query_embedding],
-    n_results=TOP_K,
-    include=[
-        "documents",
-        "metadatas",
-        "distances"
-    ]
-)
-
-
-# --------------------------------
-# 9. Check relevance
-# --------------------------------
-
-best_distance = results["distances"][0][0]
-
-print(
-    f"\nBest distance: {best_distance}"
-)
-
-
-if best_distance > THRESHOLD:
+    best_distance = results["distances"][0][0]
 
     print(
-        "\nI don't have enough information "
-        "in the provided documentation."
+        f"\nBest distance: {best_distance}"
     )
 
-else:
 
-    print("\nRelevant information found.")
+    if best_distance > THRESHOLD:
+
+        no_answer = (
+            "I don't have enough information "
+            "in the provided documentation."
+        )
+
+        print(
+            f"\n{no_answer}"
+        )
+
+        if root_span:
+            root_span.update(
+                output={
+                    "answer": no_answer,
+                    "best_distance": best_distance
+                }
+            )
+
+    else:
+
+        print("\nRelevant information found.")
 
 
-    # --------------------------------
-    # 10. Build context
-    # --------------------------------
+        # --------------------------------
+        # 9. Build context
+        # --------------------------------
 
-    context_parts = []
+        context_parts = []
 
-    sources = []
+        sources = []
 
-    for i in range(
-        len(results["documents"][0])
-    ):
+        for i in range(
+            len(results["documents"][0])
+        ):
 
-        document = results["documents"][0][i]
+            document = results["documents"][0][i]
 
-        metadata = results["metadatas"][0][i]
+            metadata = results["metadatas"][0][i]
 
-        distance = results["distances"][0][i]
+            distance = results["distances"][0][i]
 
 
-        context_parts.append(
-            f"""
+            context_parts.append(
+                f"""
 Source: {metadata['source']}
 Section: {metadata['section']}
 
 {document}
 """
+            )
+
+
+            # Store source information
+            source = {
+                "url": metadata["source"],
+                "title": metadata["title"],
+                "section": metadata["section"],
+                "distance": distance
+            }
+
+            sources.append(source)
+
+
+        context = "\n\n".join(
+            context_parts
         )
 
 
-        # Store source information
-        source = {
-            "url": metadata["source"],
-            "title": metadata["title"],
-            "section": metadata["section"],
-            "distance": distance
-        }
+        # --------------------------------
+        # 10. Create grounded prompt
+        # --------------------------------
 
-        sources.append(source)
-
-
-    context = "\n\n".join(
-        context_parts
-    )
-
-
-    # --------------------------------
-    # 11. Create grounded prompt
-    # --------------------------------
-
-    prompt = f"""
+        prompt = f"""
 You are an SRE documentation assistant.
 
 Answer the user's question using ONLY
@@ -179,56 +211,80 @@ User question:
 """
 
 
-    # --------------------------------
-    # 12. Generate answer
-    # --------------------------------
+        # --------------------------------
+        # 11. Generate answer
+        # --------------------------------
 
-    response = gemini_client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt
-    )
+        with generation_observation(
+            prompt=prompt
+        ) as generation:
+
+            response = gemini_client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt
+            )
+
+            if generation:
+                generation.update(
+                    output=response.text,
+                    usage_details=usage_details(
+                        response
+                    )
+                )
+
+        if root_span:
+            root_span.update(
+                output={
+                    "answer": response.text,
+                    "sources": retrieval_output(
+                        results
+                    )
+                }
+            )
 
 
-    # --------------------------------
-    # 13. Display answer
-    # --------------------------------
+        # --------------------------------
+        # 12. Display answer
+        # --------------------------------
 
-    print("\nAnswer:")
+        print("\nAnswer:")
 
-    print(response.text)
+        print(response.text)
 
 
-    # --------------------------------
-    # 14. Display sources
-    # --------------------------------
+        # --------------------------------
+        # 13. Display sources
+        # --------------------------------
 
-    print("\nSources:")
+        print("\nSources:")
 
-    displayed_sources = set()
+        displayed_sources = set()
 
-    for source in sources:
+        for source in sources:
 
-        source_key = (
-            source["url"],
-            source["section"]
-        )
+            source_key = (
+                source["url"],
+                source["section"]
+            )
 
-        # Avoid duplicate sources
-        if source_key in displayed_sources:
-            continue
+            # Avoid duplicate sources
+            if source_key in displayed_sources:
+                continue
 
-        displayed_sources.add(
-            source_key
-        )
+            displayed_sources.add(
+                source_key
+            )
 
-        print(
-            f"\n- {source['title']}"
-        )
+            print(
+                f"\n- {source['title']}"
+            )
 
-        print(
-            f"  Section: {source['section']}"
-        )
+            print(
+                f"  Section: {source['section']}"
+            )
 
-        print(
-            f"  URL: {source['url']}"
-        )
+            print(
+                f"  URL: {source['url']}"
+            )
+
+    flush()

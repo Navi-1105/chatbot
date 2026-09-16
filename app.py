@@ -5,6 +5,16 @@ from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 import chromadb
 from google import genai
+from observability import (
+    GEMINI_MODEL,
+    flush,
+    generation_observation,
+    new_session_id,
+    rag_trace,
+    retrieval_output,
+    retriever_observation,
+    usage_details,
+)
 
 load_dotenv()
 
@@ -69,6 +79,9 @@ def load_resources():
 
 embedding_model, collection, gemini_client = load_resources()
 
+if "langfuse_session_id" not in st.session_state:
+    st.session_state.langfuse_session_id = new_session_id()
+
 
 # --------------------------------
 # User input
@@ -88,44 +101,64 @@ if query:
 
     with st.spinner("Searching documentation..."):
 
-        # Convert question to embedding
-        query_embedding = embedding_model.encode(
-            query
-        ).tolist()
+        with rag_trace(
+            query=query,
+            entrypoint="streamlit",
+            session_id=st.session_state.langfuse_session_id,
+            top_k=TOP_K,
+        ) as root_span:
 
-        # Retrieve Top-K documents
-        results = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=TOP_K,
-            include=[
-                "documents",
-                "metadatas"
-            ]
-        )
+            with retriever_observation(
+                query=query,
+                top_k=TOP_K
+            ) as retriever_span:
 
-        # Build context
-        context_parts = []
+                # Convert question to embedding
+                query_embedding = embedding_model.encode(
+                    query
+                ).tolist()
 
-        for i in range(
-            len(results["documents"][0])
-        ):
+                # Retrieve Top-K documents
+                results = collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=TOP_K,
+                    include=[
+                        "documents",
+                        "metadatas",
+                        "distances"
+                    ]
+                )
 
-            document = results["documents"][0][i]
-            metadata = results["metadatas"][0][i]
+                if retriever_span:
+                    retriever_span.update(
+                        output=retrieval_output(
+                            results
+                        )
+                    )
 
-            context_parts.append(
-                f"""
+            # Build context
+            context_parts = []
+
+            for i in range(
+                len(results["documents"][0])
+            ):
+
+                document = results["documents"][0][i]
+                metadata = results["metadatas"][0][i]
+
+                context_parts.append(
+                    f"""
 Source: {metadata['source']}
 Section: {metadata['section']}
 
 {document}
 """
-            )
+                )
 
-        context = "\n\n".join(context_parts)
+            context = "\n\n".join(context_parts)
 
-        # Grounded prompt
-        prompt = f"""
+            # Grounded prompt
+            prompt = f"""
 You are an SRE documentation assistant.
 
 Answer the user's question using ONLY
@@ -148,11 +181,35 @@ User question:
 {query}
 """
 
-        # Generate answer
-        response = gemini_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
+            # Generate answer
+            with generation_observation(
+                prompt=prompt
+            ) as generation:
+
+                response = gemini_client.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=prompt
+                )
+
+                if generation:
+                    generation.update(
+                        output=response.text,
+                        usage_details=usage_details(
+                            response
+                        )
+                    )
+
+            if root_span:
+                root_span.update(
+                    output={
+                        "answer": response.text,
+                        "sources": retrieval_output(
+                            results
+                        )
+                    }
+                )
+
+            flush()
 
     # --------------------------------
     # Display answer

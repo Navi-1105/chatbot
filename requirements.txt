@@ -6,6 +6,7 @@ python-dotenv
 sentence-transformers
 chromadb==1.5.9
 google-genai
+langfuse==4.15.3
 requests
 beautifulsoup4
 
