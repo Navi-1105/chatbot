@@ -1,6 +1,70 @@
 import os
 import sys
-import subprocess
+from importlib.metadata import version, PackageNotFoundError
+
+# ============================================================
+# AZURE RUNTIME / DEPENDENCY DEBUG
+# ============================================================
+
+print("\n========== AZURE RUNTIME DEBUG ==========")
+print("Python executable:", sys.executable)
+print("Python version:", sys.version)
+
+packages_to_check = [
+    "chromadb",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    "opentelemetry-proto",
+    "opentelemetry-exporter-otlp-proto-common",
+    "opentelemetry-exporter-otlp-proto-grpc",
+    "opentelemetry-exporter-otlp-proto-http",
+    "opentelemetry-semantic-conventions",
+    "langfuse",
+    "anyio",
+    "streamlit",
+]
+
+for package in packages_to_check:
+    try:
+        print(
+            f"{package} == {version(package)}"
+        )
+    except PackageNotFoundError:
+        print(
+            f"{package} == NOT INSTALLED"
+        )
+
+print("==========================================\n")
+
+
+# ============================================================
+# TEST OPENTELEMETRY MODULE
+# ============================================================
+
+print("========== OPENTELEMETRY DEBUG ==========")
+
+try:
+    from opentelemetry.exporter.otlp.proto.common import _exporter_metrics
+
+    print(
+        "SUCCESS: _exporter_metrics found at:",
+        _exporter_metrics.__file__
+    )
+
+except Exception as e:
+    print(
+        "ERROR: Could not import _exporter_metrics:"
+    )
+    print(
+        repr(e)
+    )
+
+print("==========================================\n")
+
+
+# ============================================================
+# IMPORT APPLICATION DEPENDENCIES
+# ============================================================
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -19,64 +83,55 @@ from observability import (
     usage_details,
 )
 
+
+# ============================================================
+# ENVIRONMENT
+# ============================================================
+
 load_dotenv()
 
 
-# ============================================
+# ============================================================
 # CHROMADB DEBUG INFORMATION
-# ============================================
+# ============================================================
 
 print("========== CHROMA DEBUG ==========")
+
 print(
-    "Version:",
-    getattr(chromadb, "__version__", "UNKNOWN")
+    "Chroma version:",
+    getattr(
+        chromadb,
+        "__version__",
+        "UNKNOWN"
+    )
 )
+
 print(
-    "Location:",
+    "Chroma location:",
     chromadb.__file__
 )
-print(
-    "PersistentClient:",
-    hasattr(chromadb, "PersistentClient")
-)
-print(
-    "Python:",
-    sys.executable
-)
 
-# Show installed Chroma-related packages
-try:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "list"
-        ],
-        capture_output=True,
-        text=True
+print(
+    "PersistentClient available:",
+    hasattr(
+        chromadb,
+        "PersistentClient"
     )
+)
 
-    for line in result.stdout.splitlines():
-        if "chroma" in line.lower():
-            print("PACKAGE:", line)
-
-except Exception as e:
-    print("Could not retrieve pip package information:", e)
-
-print("==================================")
+print("==================================\n")
 
 
-# --------------------------------
-# Configuration
-# --------------------------------
+# ============================================================
+# CONFIGURATION
+# ============================================================
 
 TOP_K = 5
 
 
-# --------------------------------
-# Page configuration
-# --------------------------------
+# ============================================================
+# PAGE CONFIGURATION
+# ============================================================
 
 st.set_page_config(
     page_title="SRE Documentation Assistant",
@@ -85,11 +140,13 @@ st.set_page_config(
 )
 
 
-# --------------------------------
-# Title
-# --------------------------------
+# ============================================================
+# TITLE
+# ============================================================
 
-st.title("🔧 SRE Documentation Assistant")
+st.title(
+    "🔧 SRE Documentation Assistant"
+)
 
 st.write(
     "Ask questions about Site Reliability Engineering "
@@ -97,30 +154,79 @@ st.write(
 )
 
 
-# --------------------------------
-# Load models / database
-# --------------------------------
+# ============================================================
+# LOAD MODELS / DATABASE
+# ============================================================
 
 @st.cache_resource
 def load_resources():
 
+    print(
+        "========== LOADING RESOURCES =========="
+    )
+
+    # --------------------------------------------------------
     # Load embedding model
+    # --------------------------------------------------------
+
+    print(
+        "Loading SentenceTransformer..."
+    )
+
     embedding_model = SentenceTransformer(
         "all-MiniLM-L6-v2"
     )
 
+    print(
+        "SentenceTransformer loaded successfully."
+    )
+
+    # --------------------------------------------------------
     # Connect to ChromaDB
+    # --------------------------------------------------------
+
+    print(
+        "Connecting to ChromaDB..."
+    )
+
     client = chromadb.PersistentClient(
         path="./chroma_db"
     )
 
-    # Load existing collection
+    print(
+        "Chroma PersistentClient created successfully."
+    )
+
+    # --------------------------------------------------------
+    # Load collection
+    # --------------------------------------------------------
+
     collection = client.get_collection(
         name="sre_docs"
     )
 
-    # Initialize Gemini client
+    print(
+        "Chroma collection loaded:",
+        collection.name
+    )
+
+    # --------------------------------------------------------
+    # Initialize Gemini
+    # --------------------------------------------------------
+
+    print(
+        "Initializing Gemini client..."
+    )
+
     gemini_client = genai.Client()
+
+    print(
+        "Gemini client initialized successfully."
+    )
+
+    print(
+        "========================================"
+    )
 
     return (
         embedding_model,
@@ -129,16 +235,18 @@ def load_resources():
     )
 
 
-# --------------------------------
-# Initialize resources
-# --------------------------------
+# ============================================================
+# INITIALIZE RESOURCES
+# ============================================================
 
-embedding_model, collection, gemini_client = load_resources()
+embedding_model, collection, gemini_client = (
+    load_resources()
+)
 
 
-# --------------------------------
-# Langfuse session
-# --------------------------------
+# ============================================================
+# LANGFUSE SESSION
+# ============================================================
 
 if "langfuse_session_id" not in st.session_state:
 
@@ -147,9 +255,9 @@ if "langfuse_session_id" not in st.session_state:
     )
 
 
-# --------------------------------
-# User input
-# --------------------------------
+# ============================================================
+# USER INPUT
+# ============================================================
 
 query = st.text_input(
     "Ask your question:",
@@ -157,9 +265,9 @@ query = st.text_input(
 )
 
 
-# --------------------------------
-# RAG pipeline
-# --------------------------------
+# ============================================================
+# RAG PIPELINE
+# ============================================================
 
 if query:
 
@@ -167,9 +275,9 @@ if query:
         "Searching documentation..."
     ):
 
-        # --------------------------------
-        # Root RAG trace
-        # --------------------------------
+        # ====================================================
+        # ROOT RAG TRACE
+        # ====================================================
 
         with rag_trace(
             query=query,
@@ -180,23 +288,29 @@ if query:
             top_k=TOP_K,
         ) as root_span:
 
-            # --------------------------------
-            # Retrieval
-            # --------------------------------
+            # =================================================
+            # RETRIEVAL
+            # =================================================
 
             with retriever_observation(
                 query=query,
                 top_k=TOP_K
             ) as retriever_span:
 
+                # ------------------------------------------------
                 # Convert question to embedding
+                # ------------------------------------------------
+
                 query_embedding = (
                     embedding_model
                     .encode(query)
                     .tolist()
                 )
 
+                # ------------------------------------------------
                 # Retrieve Top-K documents
+                # ------------------------------------------------
+
                 results = collection.query(
                     query_embeddings=[
                         query_embedding
@@ -209,7 +323,10 @@ if query:
                     ]
                 )
 
+                # ------------------------------------------------
                 # Log retrieval output
+                # ------------------------------------------------
+
                 if retriever_span:
 
                     retriever_span.update(
@@ -218,14 +335,16 @@ if query:
                         )
                     )
 
-            # --------------------------------
-            # Build context
-            # --------------------------------
+            # =================================================
+            # BUILD CONTEXT
+            # =================================================
 
             context_parts = []
 
             for i in range(
-                len(results["documents"][0])
+                len(
+                    results["documents"][0]
+                )
             ):
 
                 document = (
@@ -249,9 +368,9 @@ Section: {metadata['section']}
                 context_parts
             )
 
-            # --------------------------------
-            # Grounded prompt
-            # --------------------------------
+            # =================================================
+            # GROUNDED PROMPT
+            # =================================================
 
             prompt = f"""
 You are an SRE documentation assistant.
@@ -276,9 +395,9 @@ User question:
 {query}
 """
 
-            # --------------------------------
-            # Generate answer
-            # --------------------------------
+            # =================================================
+            # GENERATE ANSWER
+            # =================================================
 
             with generation_observation(
                 prompt=prompt
@@ -293,7 +412,10 @@ User question:
                     )
                 )
 
+                # ------------------------------------------------
                 # Log generation information
+                # ------------------------------------------------
+
                 if generation:
 
                     generation.update(
@@ -303,9 +425,9 @@ User question:
                         )
                     )
 
-            # --------------------------------
-            # Update root trace
-            # --------------------------------
+            # =================================================
+            # UPDATE ROOT TRACE
+            # =================================================
 
             if root_span:
 
@@ -320,29 +442,33 @@ User question:
                     }
                 )
 
-            # --------------------------------
-            # Flush Langfuse
-            # --------------------------------
+            # =================================================
+            # FLUSH LANGFUSE
+            # =================================================
 
             flush()
 
 
-    # ============================================
+    # ========================================================
     # DISPLAY ANSWER
-    # ============================================
+    # ========================================================
 
-    st.subheader("Answer")
+    st.subheader(
+        "Answer"
+    )
 
     st.write(
         response.text
     )
 
 
-    # ============================================
+    # ========================================================
     # DISPLAY SOURCES
-    # ============================================
+    # ========================================================
 
-    st.subheader("Sources")
+    st.subheader(
+        "Sources"
+    )
 
     displayed_sources = set()
 
@@ -353,7 +479,10 @@ User question:
             metadata["section"]
         )
 
-        # Avoid displaying duplicate sources
+        # ----------------------------------------------------
+        # Avoid duplicate sources
+        # ----------------------------------------------------
+
         if source_key in displayed_sources:
             continue
 
