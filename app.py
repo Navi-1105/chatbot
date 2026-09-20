@@ -1,10 +1,13 @@
 import os
+import sys
+import subprocess
 
 import streamlit as st
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 import chromadb
 from google import genai
+
 from observability import (
     GEMINI_MODEL,
     flush,
@@ -17,6 +20,51 @@ from observability import (
 )
 
 load_dotenv()
+
+
+# ============================================
+# CHROMADB DEBUG INFORMATION
+# ============================================
+
+print("========== CHROMA DEBUG ==========")
+print(
+    "Version:",
+    getattr(chromadb, "__version__", "UNKNOWN")
+)
+print(
+    "Location:",
+    chromadb.__file__
+)
+print(
+    "PersistentClient:",
+    hasattr(chromadb, "PersistentClient")
+)
+print(
+    "Python:",
+    sys.executable
+)
+
+# Show installed Chroma-related packages
+try:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "list"
+        ],
+        capture_output=True,
+        text=True
+    )
+
+    for line in result.stdout.splitlines():
+        if "chroma" in line.lower():
+            print("PACKAGE:", line)
+
+except Exception as e:
+    print("Could not retrieve pip package information:", e)
+
+print("==================================")
 
 
 # --------------------------------
@@ -41,7 +89,7 @@ st.set_page_config(
 # Title
 # --------------------------------
 
-st.title(" SRE Documentation Assistant")
+st.title("🔧 SRE Documentation Assistant")
 
 st.write(
     "Ask questions about Site Reliability Engineering "
@@ -56,18 +104,22 @@ st.write(
 @st.cache_resource
 def load_resources():
 
+    # Load embedding model
     embedding_model = SentenceTransformer(
         "all-MiniLM-L6-v2"
     )
 
+    # Connect to ChromaDB
     client = chromadb.PersistentClient(
         path="./chroma_db"
     )
 
+    # Load existing collection
     collection = client.get_collection(
         name="sre_docs"
     )
 
+    # Initialize Gemini client
     gemini_client = genai.Client()
 
     return (
@@ -77,10 +129,22 @@ def load_resources():
     )
 
 
+# --------------------------------
+# Initialize resources
+# --------------------------------
+
 embedding_model, collection, gemini_client = load_resources()
 
+
+# --------------------------------
+# Langfuse session
+# --------------------------------
+
 if "langfuse_session_id" not in st.session_state:
-    st.session_state.langfuse_session_id = new_session_id()
+
+    st.session_state.langfuse_session_id = (
+        new_session_id()
+    )
 
 
 # --------------------------------
@@ -99,14 +163,26 @@ query = st.text_input(
 
 if query:
 
-    with st.spinner("Searching documentation..."):
+    with st.spinner(
+        "Searching documentation..."
+    ):
+
+        # --------------------------------
+        # Root RAG trace
+        # --------------------------------
 
         with rag_trace(
             query=query,
             entrypoint="streamlit",
-            session_id=st.session_state.langfuse_session_id,
+            session_id=(
+                st.session_state.langfuse_session_id
+            ),
             top_k=TOP_K,
         ) as root_span:
+
+            # --------------------------------
+            # Retrieval
+            # --------------------------------
 
             with retriever_observation(
                 query=query,
@@ -114,13 +190,17 @@ if query:
             ) as retriever_span:
 
                 # Convert question to embedding
-                query_embedding = embedding_model.encode(
-                    query
-                ).tolist()
+                query_embedding = (
+                    embedding_model
+                    .encode(query)
+                    .tolist()
+                )
 
                 # Retrieve Top-K documents
                 results = collection.query(
-                    query_embeddings=[query_embedding],
+                    query_embeddings=[
+                        query_embedding
+                    ],
                     n_results=TOP_K,
                     include=[
                         "documents",
@@ -129,22 +209,32 @@ if query:
                     ]
                 )
 
+                # Log retrieval output
                 if retriever_span:
+
                     retriever_span.update(
                         output=retrieval_output(
                             results
                         )
                     )
 
+            # --------------------------------
             # Build context
+            # --------------------------------
+
             context_parts = []
 
             for i in range(
                 len(results["documents"][0])
             ):
 
-                document = results["documents"][0][i]
-                metadata = results["metadatas"][0][i]
+                document = (
+                    results["documents"][0][i]
+                )
+
+                metadata = (
+                    results["metadatas"][0][i]
+                )
 
                 context_parts.append(
                     f"""
@@ -155,9 +245,14 @@ Section: {metadata['section']}
 """
                 )
 
-            context = "\n\n".join(context_parts)
+            context = "\n\n".join(
+                context_parts
+            )
 
+            # --------------------------------
             # Grounded prompt
+            # --------------------------------
+
             prompt = f"""
 You are an SRE documentation assistant.
 
@@ -181,17 +276,26 @@ User question:
 {query}
 """
 
+            # --------------------------------
             # Generate answer
+            # --------------------------------
+
             with generation_observation(
                 prompt=prompt
             ) as generation:
 
-                response = gemini_client.models.generate_content(
-                    model=GEMINI_MODEL,
-                    contents=prompt
+                response = (
+                    gemini_client
+                    .models
+                    .generate_content(
+                        model=GEMINI_MODEL,
+                        contents=prompt
+                    )
                 )
 
+                # Log generation information
                 if generation:
+
                     generation.update(
                         output=response.text,
                         usage_details=usage_details(
@@ -199,29 +303,44 @@ User question:
                         )
                     )
 
+            # --------------------------------
+            # Update root trace
+            # --------------------------------
+
             if root_span:
+
                 root_span.update(
                     output={
                         "answer": response.text,
-                        "sources": retrieval_output(
-                            results
+                        "sources": (
+                            retrieval_output(
+                                results
+                            )
                         )
                     }
                 )
 
+            # --------------------------------
+            # Flush Langfuse
+            # --------------------------------
+
             flush()
 
-    # --------------------------------
-    # Display answer
-    # --------------------------------
+
+    # ============================================
+    # DISPLAY ANSWER
+    # ============================================
 
     st.subheader("Answer")
 
-    st.write(response.text)
+    st.write(
+        response.text
+    )
 
-    # --------------------------------
-    # Display sources
-    # --------------------------------
+
+    # ============================================
+    # DISPLAY SOURCES
+    # ============================================
 
     st.subheader("Sources")
 
@@ -234,10 +353,13 @@ User question:
             metadata["section"]
         )
 
+        # Avoid displaying duplicate sources
         if source_key in displayed_sources:
             continue
 
-        displayed_sources.add(source_key)
+        displayed_sources.add(
+            source_key
+        )
 
         st.markdown(
             f"**{metadata['section']}**"
