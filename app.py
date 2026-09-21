@@ -69,6 +69,15 @@ print("==========================================\n")
 import streamlit as st
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
+import opentelemetry
+import opentelemetry.sdk
+from opentelemetry.sdk import _logs
+
+print("========== OTEL LOCATION DEBUG ==========")
+print("OpenTelemetry:", opentelemetry.__file__)
+print("OpenTelemetry SDK:", opentelemetry.sdk.__file__)
+print("OpenTelemetry logs:", _logs.__file__)
+print("==========================================")
 import chromadb
 from google import genai
 
