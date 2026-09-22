@@ -1,83 +1,10 @@
+import prefer_app_packages  # noqa: F401  # must run before chromadb / OpenTelemetry
+
 import os
-import sys
-from importlib.metadata import version, PackageNotFoundError
-
-# ============================================================
-# AZURE RUNTIME / DEPENDENCY DEBUG
-# ============================================================
-
-print("\n========== AZURE RUNTIME DEBUG ==========")
-print("Python executable:", sys.executable)
-print("Python version:", sys.version)
-
-packages_to_check = [
-    "chromadb",
-    "opentelemetry-api",
-    "opentelemetry-sdk",
-    "opentelemetry-proto",
-    "opentelemetry-exporter-otlp-proto-common",
-    "opentelemetry-exporter-otlp-proto-grpc",
-    "opentelemetry-exporter-otlp-proto-http",
-    "opentelemetry-semantic-conventions",
-    "langfuse",
-    "anyio",
-    "streamlit",
-]
-
-for package in packages_to_check:
-    try:
-        print(
-            f"{package} == {version(package)}"
-        )
-    except PackageNotFoundError:
-        print(
-            f"{package} == NOT INSTALLED"
-        )
-
-print("==========================================\n")
-
-
-# ============================================================
-# TEST OPENTELEMETRY MODULE
-# ============================================================
-
-print("========== OPENTELEMETRY DEBUG ==========")
-
-try:
-    from opentelemetry.exporter.otlp.proto.common import _exporter_metrics
-
-    print(
-        "SUCCESS: _exporter_metrics found at:",
-        _exporter_metrics.__file__
-    )
-
-except Exception as e:
-    print(
-        "ERROR: Could not import _exporter_metrics:"
-    )
-    print(
-        repr(e)
-    )
-
-print("==========================================\n")
-
-
-# ============================================================
-# IMPORT APPLICATION DEPENDENCIES
-# ============================================================
 
 import streamlit as st
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
-import opentelemetry
-import opentelemetry.sdk
-from opentelemetry.sdk import _logs
-
-print("========== OTEL LOCATION DEBUG ==========")
-print("OpenTelemetry:", opentelemetry.__file__)
-print("OpenTelemetry SDK:", opentelemetry.sdk.__file__)
-print("OpenTelemetry logs:", _logs.__file__)
-print("==========================================")
 import chromadb
 from google import genai
 

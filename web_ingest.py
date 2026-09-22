@@ -1,3 +1,5 @@
+import prefer_app_packages  # noqa: F401  # must run before chromadb / OpenTelemetry
+
 import requests
 from bs4 import BeautifulSoup
 from sentence_transformers import SentenceTransformer

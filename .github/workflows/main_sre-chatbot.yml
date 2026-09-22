@@ -45,6 +45,10 @@ jobs:
       # If you prefer to disable the Oryx build process during deployment, follow these steps:
       # 1. Remove the SCM_DO_BUILD_DURING_DEPLOYMENT app setting from your Azure App Service Environment variables.
       # 2. Refer to sample workflows for alternative deployment strategies: https://github.com/Azure/actions-workflow-samples/tree/master/AppService
+      #
+      # If chromadb fails with ReadableLogRecord / mixed OpenTelemetry, also set
+      # ApplicationInsightsAgent_EXTENSION_VERSION=disabled so Azure does not
+      # inject /agents/python/common ahead of the app venv.
       
 
   deploy:

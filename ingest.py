@@ -1,3 +1,5 @@
+import prefer_app_packages  # noqa: F401  # must run before chromadb / OpenTelemetry
+
 from sentence_transformers import SentenceTransformer
 import chromadb
 import re
